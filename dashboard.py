@@ -251,11 +251,12 @@ def green_color(*args, **kwargs):
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_all(time_range, keywords_tuple):
     KEYWORDS    = list(keywords_tuple)
-    reddit_t    = {"24h": "day", "week": "week", "month": "month"}[time_range]
-    hn_cutoff   = int(time.time() - {"24h": 86400, "week": 604800, "month": 2592000}[time_range])
+    reddit_t    = {"1h": "hour", "24h": "day", "week": "week", "month": "month"}[time_range]
+    hn_cutoff   = int(time.time() - {"1h": 3600, "24h": 86400, "week": 604800, "month": 2592000}[time_range])
     date_cutoff = datetime.datetime.now() - {
-        "24h": datetime.timedelta(days=1),
-        "week": datetime.timedelta(weeks=1),
+        "1h":    datetime.timedelta(hours=1),
+        "24h":   datetime.timedelta(days=1),
+        "week":  datetime.timedelta(weeks=1),
         "month": datetime.timedelta(days=30),
     }[time_range]
 
@@ -384,7 +385,7 @@ def make_wordcloud(titles_tuple):
 with st.sidebar:
     st.markdown("### ◈ CONTROLS")
     st.markdown("---")
-    time_range = st.radio("TIME RANGE", ["24h", "week", "month"], index=1)
+    time_range = st.radio("TIME RANGE", ["1h", "24h", "week", "month"], index=2)
     st.markdown("---")
     st.markdown("### ◈ PLATFORMS")
     selected_platforms = st.multiselect("ACTIVE FEEDS", ALL_PLATFORMS, default=ALL_PLATFORMS)
