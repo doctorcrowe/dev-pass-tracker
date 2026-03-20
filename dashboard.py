@@ -15,6 +15,7 @@ import feedparser
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from io import BytesIO
 from textblob import TextBlob
 from wordcloud import WordCloud, STOPWORDS
@@ -347,33 +348,270 @@ with st.sidebar:
 
 
 # ─── HEADER ──────────────────────────────────────────────
-st.markdown("""
-<pre style="color:#00ff41; font-size:0.62rem; line-height:1.3; text-shadow:0 0 8px rgba(0,255,65,0.45); margin-bottom:0;">
- ██████╗██████╗  ██████╗ ██╗    ██╗███████╗
-██╔════╝██╔══██╗██╔═══██╗██║    ██║██╔════╝
-██║     ██████╔╝██║   ██║██║ █╗ ██║█████╗
-██║     ██╔══██╗██║   ██║██║███╗██║██╔══╝
-╚██████╗██║  ██║╚██████╔╝╚███╔███╔╝███████╗
- ╚═════╝╚═╝  ╚═╝ ╚═════╝  ╚══╝╚══╝╚══════╝
+components.html("""
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { margin:0; background:#050505; overflow:hidden; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const W = window.innerWidth || 900;
+const H = 200;
+const c = document.getElementById('c');
+c.width = W; c.height = H;
+const ctx = c.getContext('2d');
 
- ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗
-██╔════╝██╔═══██╗████╗ ████║████╗ ████║██╔══██╗████╗  ██║██╔══██╗
-██║     ██║   ██║██╔████╔██║██╔████╔██║███████║██╔██╗ ██║██║  ██║
-██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██╔══██║██║╚██╗██║██║  ██║
-╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝
- ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝
+// ── STARS ─────────────────────────────────────────────
+const stars = Array.from({length:80}, () => ({
+  x: Math.random()*W, y: Math.random()*H,
+  s: Math.random()*0.8+0.2, spd: Math.random()*0.4+0.1
+}));
 
- ██████╗███████╗███╗   ██╗████████╗███████╗██████╗
-██╔════╝██╔════╝████╗  ██║╚══██╔══╝██╔════╝██╔══██╗
-██║     █████╗  ██╔██╗ ██║   ██║   █████╗  ██████╔╝
-██║     ██╔══╝  ██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗
-╚██████╗███████╗██║ ╚████║   ██║   ███████╗██║  ██║
- ╚═════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
-</pre>
-<p style="color:#00661a; font-size:0.78rem; letter-spacing:3px; margin-top:4px;">
-▸ v1.0 &nbsp;·&nbsp; MONITORING: FIREWORKS AI · KIMI K2 · LLM LANDSCAPE &nbsp;·&nbsp; 6 PLATFORMS
-</p>
-""", unsafe_allow_html=True)
+// ── ENEMY SPRITES (pixel arrays, 1=body, 2=wing, 3=eye) ──
+const BEE = [
+  [0,0,1,0,0,0,1,0,0],
+  [0,1,1,1,1,1,1,1,0],
+  [2,1,3,1,1,1,3,1,2],
+  [2,1,1,1,1,1,1,1,2],
+  [0,2,1,0,0,0,1,2,0],
+  [0,0,2,0,0,0,2,0,0],
+];
+const BUTTERFLY = [
+  [0,2,0,1,1,0,2,0],
+  [2,2,1,1,1,1,2,2],
+  [2,1,3,1,1,3,1,2],
+  [0,1,1,1,1,1,1,0],
+  [0,0,1,0,0,1,0,0],
+];
+const BOSS = [
+  [0,0,1,1,1,1,0,0],
+  [0,1,1,1,1,1,1,0],
+  [1,1,3,1,1,3,1,1],
+  [1,1,1,1,1,1,1,1],
+  [0,1,1,0,0,1,1,0],
+  [0,1,0,0,0,0,1,0],
+];
+
+const PALETTES = [
+  {1:'#ff4466', 2:'#ff88aa', 3:'#ffffff'}, // red
+  {1:'#4488ff', 2:'#88bbff', 3:'#ffffff'}, // blue
+  {1:'#ffcc00', 2:'#ffee88', 3:'#ffffff'}, // gold (boss)
+];
+
+function drawSprite(sprite, palette, cx, cy, scale=2) {
+  sprite.forEach((row, ry) => {
+    row.forEach((px, rx) => {
+      if (!px) return;
+      ctx.fillStyle = palette[px];
+      ctx.fillRect(
+        cx + (rx - row.length/2) * scale,
+        cy + (ry - sprite.length/2) * scale,
+        scale, scale
+      );
+    });
+  });
+}
+
+// ── FORMATION ─────────────────────────────────────────
+const COLS = 10, GAP_X = 60, GAP_Y = 28;
+const START_X = W/2 - (COLS-1)*GAP_X/2;
+const enemies = [];
+for (let r = 0; r < 3; r++) {
+  for (let c = 0; c < COLS; c++) {
+    enemies.push({
+      col: c, row: r,
+      bx: START_X + c*GAP_X,
+      by: 28 + r*GAP_Y,
+      alive: true,
+      sprite: r===0 ? BOSS : r===1 ? BUTTERFLY : BEE,
+      palette: PALETTES[r===0 ? 2 : r===1 ? 1 : 0],
+      wingOpen: Math.random()>0.5,
+      wingTimer: Math.floor(Math.random()*30),
+    });
+  }
+}
+
+let formX = 0, formDir = 1, formSpd = 0.4;
+
+// ── PLAYER ────────────────────────────────────────────
+const player = { x: W/2, y: H-28, dir: 1, spd: 0.5 };
+
+// ── BULLETS ───────────────────────────────────────────
+const bullets = [];
+let bTimer = 0;
+
+// ── EXPLOSIONS ────────────────────────────────────────
+const explosions = [];
+
+function explode(x, y) {
+  for (let i=0; i<8; i++) {
+    const a = (i/8)*Math.PI*2;
+    explosions.push({x, y, vx:Math.cos(a)*2, vy:Math.sin(a)*2, life:18, color:'#ff8800'});
+  }
+}
+
+// ── DIVE ──────────────────────────────────────────────
+let diveEnemy = null, diveTimer = 120;
+
+// ── MAIN LOOP ─────────────────────────────────────────
+let frame = 0;
+
+function draw() {
+  frame++;
+  ctx.fillStyle = '#050505';
+  ctx.fillRect(0,0,W,H);
+
+  // Stars
+  stars.forEach(s => {
+    s.y += s.spd;
+    if (s.y > H) { s.y=0; s.x=Math.random()*W; }
+    ctx.fillStyle = `rgba(255,255,255,${0.4+Math.random()*0.3})`;
+    ctx.fillRect(s.x, s.y, s.s, s.s);
+  });
+
+  // Formation sway
+  formX += formSpd * formDir;
+  if (Math.abs(formX) > 55) formDir *= -1;
+
+  // Wing flap
+  enemies.forEach(e => {
+    if (!e.alive) return;
+    e.wingTimer++;
+    if (e.wingTimer > 22) { e.wingOpen = !e.wingOpen; e.wingTimer=0; }
+  });
+
+  // Draw enemies
+  enemies.forEach(e => {
+    if (!e.alive) return;
+    const ex = e.bx + formX;
+    const ey = e.by;
+    drawSprite(e.sprite, e.palette, ex, ey, 2);
+  });
+
+  // Dive enemy
+  diveTimer--;
+  if (diveTimer <= 0 && !diveEnemy) {
+    const alive = enemies.filter(e=>e.alive);
+    if (alive.length > 0) {
+      const pick = alive[Math.floor(Math.random()*alive.length)];
+      diveEnemy = {
+        x: pick.bx + formX, y: pick.by,
+        tx: player.x, ty: player.y,
+        sprite: pick.sprite, palette: pick.palette,
+        t: 0,
+      };
+      pick.alive = false;
+      diveTimer = 180 + Math.random()*120;
+    }
+  }
+  if (diveEnemy) {
+    diveEnemy.t += 0.018;
+    // arc dive path
+    const t = diveEnemy.t;
+    const cx1 = diveEnemy.x + 80, cy1 = diveEnemy.y + 80;
+    const cx2 = diveEnemy.tx - 80, cy2 = diveEnemy.ty - 80;
+    const bx = Math.pow(1-t,3)*diveEnemy.x + 3*Math.pow(1-t,2)*t*cx1 + 3*(1-t)*t*t*cx2 + t*t*t*diveEnemy.tx;
+    const by = Math.pow(1-t,3)*diveEnemy.y + 3*Math.pow(1-t,2)*t*cy1 + 3*(1-t)*t*t*cy2 + t*t*t*diveEnemy.ty;
+    drawSprite(diveEnemy.sprite, diveEnemy.palette, bx, by, 2);
+    if (diveEnemy.t >= 1) {
+      explode(bx, by);
+      // put it back in formation
+      const slot = enemies.find(e=>!e.alive);
+      if (slot) slot.alive = true;
+      diveEnemy = null;
+    }
+  }
+
+  // Player drift
+  player.x += player.spd * player.dir;
+  if (player.x > W-60 || player.x < 60) player.dir *= -1;
+
+  // Draw player ship
+  const px = player.x, py = player.y;
+  ctx.fillStyle = '#00ff41';
+  ctx.shadowBlur = 6; ctx.shadowColor = '#00ff41';
+  // body
+  ctx.fillRect(px-2, py-10, 4, 16);
+  ctx.fillRect(px-8, py-2, 16, 6);
+  ctx.fillRect(px-11, py+2, 5, 5);
+  ctx.fillRect(px+6,  py+2, 5, 5);
+  // cockpit
+  ctx.fillStyle = '#88ffff';
+  ctx.fillRect(px-2, py-8, 4, 5);
+  // engine
+  ctx.fillStyle = frame%4<2 ? '#ff8800' : '#ffcc00';
+  ctx.fillRect(px-2, py+6, 4, 4);
+  ctx.shadowBlur = 0;
+
+  // Shoot
+  bTimer++;
+  if (bTimer > 40) {
+    bullets.push({x:px, y:py-12, spd:-6, enemy:false});
+    const alive = enemies.filter(e=>e.alive);
+    if (alive.length) {
+      const s = alive[Math.floor(Math.random()*alive.length)];
+      bullets.push({x:s.bx+formX, y:s.by+10, spd:3.5, enemy:true});
+    }
+    bTimer = 0;
+  }
+
+  // Bullets
+  for (let i=bullets.length-1; i>=0; i--) {
+    const b = bullets[i];
+    b.y += b.spd;
+    if (b.y<-5 || b.y>H+5) { bullets.splice(i,1); continue; }
+    ctx.fillStyle = b.enemy ? '#ff4444' : '#ffff44';
+    ctx.shadowBlur = 5; ctx.shadowColor = ctx.fillStyle;
+    ctx.fillRect(b.x-1, b.y-5, 2, 10);
+    ctx.shadowBlur = 0;
+    // hit enemy?
+    if (!b.enemy) {
+      enemies.forEach(e => {
+        if (!e.alive) return;
+        if (Math.abs(b.x-(e.bx+formX))<10 && Math.abs(b.y-e.by)<10) {
+          e.alive = false;
+          explode(e.bx+formX, e.by);
+          bullets.splice(i,1);
+          setTimeout(()=>{ e.alive=true; }, 3000);
+        }
+      });
+    }
+  }
+
+  // Explosions
+  for (let i=explosions.length-1; i>=0; i--) {
+    const e = explosions[i];
+    e.x+=e.vx; e.y+=e.vy; e.life--;
+    if (e.life<=0) { explosions.splice(i,1); continue; }
+    ctx.globalAlpha = e.life/18;
+    ctx.fillStyle = e.life>9 ? '#ffcc00' : '#ff4400';
+    ctx.fillRect(e.x-2, e.y-2, 4, 4);
+    ctx.globalAlpha = 1;
+  }
+
+  // Title overlay
+  ctx.font = 'bold 20px "Share Tech Mono", "Courier New", monospace';
+  ctx.fillStyle = '#00ff41';
+  ctx.shadowBlur = 12; ctx.shadowColor = '#00ff41';
+  ctx.textAlign = 'center';
+  ctx.fillText('CROWE COMMAND CENTER', W/2, H-38);
+  ctx.shadowBlur = 0;
+  ctx.font = '10px "Share Tech Mono", "Courier New", monospace';
+  ctx.fillStyle = '#006620';
+  ctx.fillText('▸ MONITORING: FIREWORKS AI  ·  KIMI K2  ·  LLM LANDSCAPE  ·  6 PLATFORMS', W/2, H-20);
+
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
+""", height=205)
 
 st.markdown("---")
 
