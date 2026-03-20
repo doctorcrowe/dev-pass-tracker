@@ -4,6 +4,8 @@ DEV PASS TRACKER — Retro Streamlit Dashboard
 """
 
 import datetime
+import json
+import os
 import random
 import time
 import urllib.parse
@@ -159,11 +161,30 @@ button[aria-selected="true"][data-baseweb="tab"] {
 
 
 # ─── KEYWORDS ────────────────────────────────────────────
-KEYWORDS = [
+DEFAULT_KEYWORDS = [
     "Fireworks AI", "fireworks.ai", "FireAttention", "Fireworks inference",
     "Kimi k2.5 turbo", "Kimi k2", "Moonshot AI", "kimi.ai",
     "open source LLM inference", "LLM API pricing", "fast inference", "MoE model",
 ]
+
+KEYWORDS_FILE = os.path.join(os.path.dirname(__file__), "keywords.json")
+
+def load_keywords():
+    try:
+        with open(KEYWORDS_FILE) as f:
+            return json.load(f)
+    except:
+        return DEFAULT_KEYWORDS.copy()
+
+def save_keywords(kws):
+    try:
+        with open(KEYWORDS_FILE, "w") as f:
+            json.dump(kws, f, indent=2)
+    except:
+        pass  # read-only filesystem on Streamlit Cloud — session state still works
+
+if "keywords" not in st.session_state:
+    st.session_state.keywords = load_keywords()
 
 ALL_PLATFORMS = ["Hacker News", "Reddit", "Google News", "Stack Overflow", "Lobsters", "dev.to"]
 
@@ -197,7 +218,8 @@ def green_color(*args, **kwargs):
 
 # ─── DATA FETCHING (cached 30 min) ───────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_all(time_range):
+def fetch_all(time_range, keywords_tuple):
+    KEYWORDS    = list(keywords_tuple)
     reddit_t    = {"24h": "day", "week": "week", "month": "month"}[time_range]
     hn_cutoff   = int(time.time() - {"24h": 86400, "week": 604800, "month": 2592000}[time_range])
     date_cutoff = datetime.datetime.now() - {
@@ -333,7 +355,23 @@ with st.sidebar:
     selected_platforms = st.multiselect("ACTIVE FEEDS", ALL_PLATFORMS, default=ALL_PLATFORMS)
     st.markdown("---")
     st.markdown("### ◈ KEYWORDS")
-    selected_keywords = st.multiselect("TRACKING", KEYWORDS, default=KEYWORDS)
+    new_kw = st.text_input("ADD KEYWORD", placeholder="e.g. Together AI", key="new_kw_input")
+    if st.button("＋  ADD KEYWORD"):
+        kw = new_kw.strip()
+        if kw and kw not in st.session_state.keywords:
+            st.session_state.keywords.append(kw)
+            save_keywords(st.session_state.keywords)
+            st.cache_data.clear()
+            st.rerun()
+    st.markdown("<small style='color:rgba(0,255,65,0.4);'>TRACKING LIST:</small>", unsafe_allow_html=True)
+    for kw in list(st.session_state.keywords):
+        col1, col2 = st.columns([5, 1])
+        col1.markdown(f"<small style='color:#00cc33;'>▸ {kw}</small>", unsafe_allow_html=True)
+        if col2.button("✕", key=f"del_{kw}"):
+            st.session_state.keywords.remove(kw)
+            save_keywords(st.session_state.keywords)
+            st.cache_data.clear()
+            st.rerun()
     st.markdown("---")
     if st.button("⟳  REFRESH DATA"):
         st.cache_data.clear()
@@ -618,14 +656,14 @@ st.markdown("---")
 
 # ─── FETCH ───────────────────────────────────────────────
 with st.spinner("◈  SCANNING NETWORKS..."):
-    df = fetch_all(time_range)
+    df = fetch_all(time_range, tuple(st.session_state.keywords))
 
 if df.empty:
     st.error("◈  NO SIGNAL DETECTED. CHECK YOUR CONNECTION AND REFRESH.")
     st.stop()
 
 # Apply filters
-df = df[df["platform"].isin(selected_platforms) & df["keyword"].isin(selected_keywords)]
+df = df[df["platform"].isin(selected_platforms)]
 
 if df.empty:
     st.warning("No results match your current filters.")
