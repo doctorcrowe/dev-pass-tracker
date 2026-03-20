@@ -261,18 +261,19 @@ def fetch_all(time_range, keywords_tuple):
 
     rows = []
 
-    def add(platform, title, url, score, keyword):
+    def add(platform, title, url, score, keyword, discussion_url=""):
         if not title or not is_relevant(title, keyword):
             return
         sentiment, _ = get_sentiment(title)
         rows.append({
-            "platform":  platform,
-            "keyword":   keyword,
-            "title":     title[:150],
-            "url":       url,
-            "score":     int(score),
-            "sentiment": sentiment,
-            "fetched_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "platform":       platform,
+            "keyword":        keyword,
+            "title":          title[:150],
+            "url":            url,
+            "discussion_url": discussion_url,
+            "score":          int(score),
+            "sentiment":      sentiment,
+            "fetched_at":     datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         })
 
     for kw in KEYWORDS:
@@ -285,9 +286,10 @@ def fetch_all(time_range, keywords_tuple):
                 "numericFilters": f"created_at_i>{hn_cutoff}",
             })
             for h in r.json().get("hits", []):
-                add("Hacker News", h.get("title", ""),
-                    h.get("url") or f"https://news.ycombinator.com/item?id={h['objectID']}",
-                    h.get("points", 0), kw)
+                hn_url  = f"https://news.ycombinator.com/item?id={h['objectID']}"
+                ext_url = h.get("url") or hn_url
+                add("Hacker News", h.get("title", ""), hn_url,
+                    h.get("points", 0), kw, discussion_url=ext_url)
         except: pass
 
         # Reddit
@@ -351,7 +353,7 @@ def fetch_all(time_range, keywords_tuple):
     except: pass
 
     return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["platform","keyword","title","url","score","sentiment","fetched_at"]
+        columns=["platform","keyword","title","url","discussion_url","score","sentiment","fetched_at"]
     )
 
 
@@ -809,6 +811,7 @@ with tab1:
   </a>
   <br/>
   <span style="color:rgba(0,255,65,0.32); font-size:0.7rem;">⌗ {row['keyword']}</span>
+  {f'&nbsp;&nbsp;<a href="{row["discussion_url"]}" target="_blank" style="color:#ffaa00; font-size:0.68rem; text-decoration:none;">↗ view article</a>' if row.get("discussion_url") else ""}
 </div>""", unsafe_allow_html=True)
 
     # Latest news from Google News (no score, sorted by recency)
