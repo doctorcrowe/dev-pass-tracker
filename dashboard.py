@@ -167,24 +167,31 @@ DEFAULT_KEYWORDS = [
     "open source LLM inference", "LLM API pricing", "fast inference", "MoE model",
 ]
 
-KEYWORDS_FILE = os.path.join(os.path.dirname(__file__), "keywords.json")
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "keywords.json")
 
-def load_keywords():
+def load_config():
     try:
-        with open(KEYWORDS_FILE) as f:
-            return json.load(f)
+        with open(CONFIG_FILE) as f:
+            data = json.load(f)
+            # support both old list format and new dict format
+            if isinstance(data, list):
+                return {"keywords": data, "exclude": []}
+            return data
     except:
-        return DEFAULT_KEYWORDS.copy()
+        return {"keywords": DEFAULT_KEYWORDS.copy(), "exclude": []}
 
-def save_keywords(kws):
+def save_config(cfg):
     try:
-        with open(KEYWORDS_FILE, "w") as f:
-            json.dump(kws, f, indent=2)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
     except:
-        pass  # read-only filesystem on Streamlit Cloud — session state still works
+        pass  # read-only on Streamlit Cloud — session state still works
 
+cfg = load_config()
 if "keywords" not in st.session_state:
-    st.session_state.keywords = load_keywords()
+    st.session_state.keywords = cfg["keywords"]
+if "exclude" not in st.session_state:
+    st.session_state.exclude = cfg.get("exclude", [])
 
 ALL_PLATFORMS = ["Hacker News", "Reddit", "Google News", "Stack Overflow", "Lobsters", "dev.to"]
 
@@ -198,13 +205,37 @@ PLOTLY_BASE = dict(
 
 
 # ─── HELPERS ─────────────────────────────────────────────
-def is_relevant(title, keyword):
-    t = title.lower()
-    if " " not in keyword:
-        return keyword.lower() in t
-    if keyword.lower() in t:
+def _simple_match(title_lower, kw):
+    kw = kw.strip().strip('"')
+    if kw.lower() in title_lower:
         return True
-    return max(keyword.split(), key=len).lower() in t
+    if " " not in kw:
+        return False
+    return max(kw.split(), key=len).lower() in title_lower
+
+def is_relevant(title, keyword):
+    """Supports AND / OR / NOT boolean operators."""
+    t = title.lower()
+    kw = keyword.strip()
+    if " NOT " in kw:
+        parts = kw.split(" NOT ", 1)
+        return is_relevant(title, parts[0]) and not is_relevant(title, parts[1])
+    if " AND " in kw:
+        return all(is_relevant(title, p) for p in kw.split(" AND "))
+    if " OR " in kw:
+        return any(is_relevant(title, p) for p in kw.split(" OR "))
+    return _simple_match(t, kw)
+
+def api_term(keyword):
+    """Extract the primary search term to send to APIs (strips boolean operators)."""
+    kw = keyword.strip()
+    if " NOT " in kw:
+        kw = kw.split(" NOT ")[0]
+    if " AND " in kw:
+        kw = max(kw.split(" AND "), key=len)
+    if " OR " in kw:
+        kw = kw.split(" OR ")[0]
+    return kw.strip().strip('"')
 
 def get_sentiment(text):
     p = TextBlob(text).sentiment.polarity
@@ -245,10 +276,12 @@ def fetch_all(time_range, keywords_tuple):
         })
 
     for kw in KEYWORDS:
+        term = api_term(kw)  # strip boolean operators for API queries
+
         # Hacker News
         try:
             r = requests.get("https://hn.algolia.com/api/v1/search", timeout=10, params={
-                "query": kw, "tags": "story", "hitsPerPage": 20,
+                "query": term, "tags": "story", "hitsPerPage": 20,
                 "numericFilters": f"created_at_i>{hn_cutoff}",
             })
             for h in r.json().get("hits", []):
@@ -261,7 +294,7 @@ def fetch_all(time_range, keywords_tuple):
         try:
             r = requests.get("https://www.reddit.com/search.json", timeout=10,
                 headers={"User-Agent": "dev-pass-tracker/1.0"},
-                params={"q": f'"{kw}"', "sort": "top", "t": reddit_t, "limit": 20})
+                params={"q": f'"{term}"', "sort": "top", "t": reddit_t, "limit": 20})
             for post in r.json()["data"]["children"]:
                 d = post["data"]
                 add("Reddit", d["title"], f"https://reddit.com{d['permalink']}", d["score"], kw)
@@ -269,7 +302,7 @@ def fetch_all(time_range, keywords_tuple):
 
         # Google News
         try:
-            q    = urllib.parse.quote(f'"{kw}"')
+            q    = urllib.parse.quote(f'"{term}"')
             feed = feedparser.parse(f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en")
             for e in feed.entries[:20]:
                 if hasattr(e, "published_parsed") and e.published_parsed:
@@ -281,7 +314,7 @@ def fetch_all(time_range, keywords_tuple):
         # Stack Overflow
         try:
             r = requests.get("https://api.stackexchange.com/2.3/search", timeout=10, params={
-                "order": "desc", "sort": "relevance", "intitle": kw,
+                "order": "desc", "sort": "relevance", "intitle": term,
                 "site": "stackoverflow", "pagesize": 20, "fromdate": hn_cutoff,
             })
             for item in r.json().get("items", []):
@@ -354,13 +387,52 @@ with st.sidebar:
     st.markdown("### ◈ PLATFORMS")
     selected_platforms = st.multiselect("ACTIVE FEEDS", ALL_PLATFORMS, default=ALL_PLATFORMS)
     st.markdown("---")
-    st.markdown("### ◈ KEYWORDS")
-    new_kw = st.text_input("ADD KEYWORD", placeholder="e.g. Together AI", key="new_kw_input")
-    if st.button("＋  ADD KEYWORD"):
+    # ── Keywords header + info popover ───────────────────
+    kw_col, info_col = st.columns([4, 1])
+    kw_col.markdown("### ◈ KEYWORDS")
+    with info_col.popover("ℹ"):
+        st.markdown("""
+**◈ DATA SOURCES**
+
+Results are pulled from 6 platforms:
+- **Hacker News** — tech community, high signal
+- **Reddit** — broad dev conversations
+- **Google News** — press & blog coverage
+- **Stack Overflow** — dev Q&A, adoption signal
+- **Lobsters** — curated tech links
+- **dev.to** — developer articles
+
+Data is cached for **30 minutes**. Hit Refresh to force a new scan.
+
+---
+
+**◈ BOOLEAN SEARCH**
+
+You can use operators when adding keywords:
+
+| Syntax | Example | Meaning |
+|---|---|---|
+| `AND` | `Groq AND inference` | both words must appear |
+| `OR` | `Fireworks OR fireworks.ai` | either word matches |
+| `NOT` | `Fireworks AI NOT show` | exclude a word |
+| `"quotes"` | `"Fireworks AI"` | exact phrase |
+
+Combine them: `"Fireworks AI" NOT fireworks show`
+
+---
+
+**◈ PERSISTENCE**
+
+- **Running locally** — changes save to `keywords.json` and persist forever
+- **Streamlit Cloud (shared link)** — changes last for your browser session only. To make them permanent, edit `keywords.json` in your GitHub repo.
+""")
+
+    new_kw = st.text_input("ADD KEYWORD", placeholder='e.g. Groq OR "Groq AI"', key="new_kw_input")
+    if st.button("＋  ADD"):
         kw = new_kw.strip()
         if kw and kw not in st.session_state.keywords:
             st.session_state.keywords.append(kw)
-            save_keywords(st.session_state.keywords)
+            save_config({"keywords": st.session_state.keywords, "exclude": st.session_state.exclude})
             st.cache_data.clear()
             st.rerun()
     st.markdown("<small style='color:rgba(0,255,65,0.4);'>TRACKING LIST:</small>", unsafe_allow_html=True)
@@ -369,8 +441,26 @@ with st.sidebar:
         col1.markdown(f"<small style='color:#00cc33;'>▸ {kw}</small>", unsafe_allow_html=True)
         if col2.button("✕", key=f"del_{kw}"):
             st.session_state.keywords.remove(kw)
-            save_keywords(st.session_state.keywords)
+            save_config({"keywords": st.session_state.keywords, "exclude": st.session_state.exclude})
             st.cache_data.clear()
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("### ◈ EXCLUDE TERMS")
+    st.markdown("<small style='color:rgba(0,255,65,0.4);'>Results containing these words are hidden globally.</small>", unsafe_allow_html=True)
+    new_ex = st.text_input("ADD EXCLUSION", placeholder="e.g. fireworks show", key="new_ex_input")
+    if st.button("＋  EXCLUDE"):
+        ex = new_ex.strip()
+        if ex and ex not in st.session_state.exclude:
+            st.session_state.exclude.append(ex)
+            save_config({"keywords": st.session_state.keywords, "exclude": st.session_state.exclude})
+            st.rerun()
+    for ex in list(st.session_state.exclude):
+        c1, c2 = st.columns([5, 1])
+        c1.markdown(f"<small style='color:#ff6644;'>✗ {ex}</small>", unsafe_allow_html=True)
+        if c2.button("✕", key=f"ex_{ex}"):
+            st.session_state.exclude.remove(ex)
+            save_config({"keywords": st.session_state.keywords, "exclude": st.session_state.exclude})
             st.rerun()
     st.markdown("---")
     if st.button("⟳  REFRESH DATA"):
@@ -664,6 +754,11 @@ if df.empty:
 
 # Apply filters
 df = df[df["platform"].isin(selected_platforms)]
+
+# Apply global exclude terms
+if st.session_state.exclude:
+    pattern = "|".join(st.session_state.exclude)
+    df = df[~df["title"].str.contains(pattern, case=False, na=False, regex=False)]
 
 if df.empty:
     st.warning("No results match your current filters.")
