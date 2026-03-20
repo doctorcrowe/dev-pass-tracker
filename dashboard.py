@@ -23,7 +23,7 @@ import pandas as pd
 
 # ─── PAGE CONFIG ─────────────────────────────────────────
 st.set_page_config(
-    page_title="CROWE COMMAND CENTER",
+    page_title="CROWE COMMAND",
     page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -239,7 +239,7 @@ def fetch_all(time_range):
         try:
             r = requests.get("https://www.reddit.com/search.json", timeout=10,
                 headers={"User-Agent": "dev-pass-tracker/1.0"},
-                params={"q": kw, "sort": "top", "t": reddit_t, "limit": 20})
+                params={"q": f'"{kw}"', "sort": "top", "t": reddit_t, "limit": 20})
             for post in r.json()["data"]["children"]:
                 d = post["data"]
                 add("Reddit", d["title"], f"https://reddit.com{d['permalink']}", d["score"], kw)
@@ -599,10 +599,10 @@ function draw() {
   ctx.fillStyle = '#00ff41';
   ctx.shadowBlur = 12; ctx.shadowColor = '#00ff41';
   ctx.textAlign = 'center';
-  ctx.fillText('CROWE COMMAND CENTER', W/2, H-38);
+  ctx.fillText('CROWE COMMAND', W/2, H-38);
   ctx.shadowBlur = 0;
   ctx.font = '10px "Share Tech Mono", "Courier New", monospace';
-  ctx.fillStyle = '#006620';
+  ctx.fillStyle = '#00dd44';
   ctx.fillText('▸ MONITORING: FIREWORKS AI  ·  KIMI K2  ·  LLM LANDSCAPE  ·  6 PLATFORMS', W/2, H-20);
 
   requestAnimationFrame(draw);
@@ -657,9 +657,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ── TAB 1: HIGHLIGHTS ────────────────────────────────────
 with tab1:
     st.markdown("#### TOP POSTS BY ENGAGEMENT SCORE")
-    top = df[df["score"] > 0].sort_values("score", ascending=False).head(10)
-    if top.empty:
-        top = df.head(10)
+    top = df[df["score"] > 0].sort_values("score", ascending=False).head(8)
 
     for _, row in top.iterrows():
         s_color = {"POSITIVE": "#00ff41", "NEGATIVE": "#ff3333", "NEUTRAL": "#ffaa00"}[row["sentiment"]]
@@ -674,6 +672,29 @@ with tab1:
   <a href="{row['url']}" target="_blank"
      style="color:#00ff41; font-size:0.92rem; font-weight:bold; text-decoration:none;
             text-shadow:0 0 6px rgba(0,255,65,0.3);">
+    {row['title']}
+  </a>
+  <br/>
+  <span style="color:rgba(0,255,65,0.32); font-size:0.7rem;">⌗ {row['keyword']}</span>
+</div>""", unsafe_allow_html=True)
+
+    # Latest news from Google News (no score, sorted by recency)
+    st.markdown("#### LATEST NEWS")
+    news = df[df["platform"] == "Google News"].sort_values("fetched_at", ascending=False).head(8)
+    if news.empty:
+        st.markdown("<small style='color:#006620;'>No recent news articles found.</small>", unsafe_allow_html=True)
+    for _, row in news.iterrows():
+        s_color = {"POSITIVE": "#00ff41", "NEGATIVE": "#ff3333", "NEUTRAL": "#ffaa00"}[row["sentiment"]]
+        st.markdown(f"""
+<div style="background:#090f09; border:1px solid rgba(0,255,65,0.12);
+     border-left:3px solid {s_color}; padding:10px 16px; margin-bottom:8px; border-radius:2px;">
+  <span style="color:{s_color}; font-size:0.68rem;">◆ {row['sentiment']}</span>
+  <span style="color:rgba(0,255,65,0.38); font-size:0.68rem; float:right;">
+    Google News &nbsp;·&nbsp; {row['fetched_at']}
+  </span>
+  <br/>
+  <a href="{row['url']}" target="_blank"
+     style="color:#00cc33; font-size:0.88rem; text-decoration:none;">
     {row['title']}
   </a>
   <br/>
@@ -807,7 +828,7 @@ with tab4:
 st.markdown("---")
 st.markdown(
     f"<p style='color:rgba(0,255,65,0.2); font-size:0.7rem; text-align:center; letter-spacing:2px;'>"
-    f"CROWE COMMAND CENTER v1.0 &nbsp;·&nbsp; {len(df):,} SIGNALS &nbsp;·&nbsp; "
+    f"CROWE COMMAND v1.0 &nbsp;·&nbsp; {len(df):,} SIGNALS &nbsp;·&nbsp; "
     f"6 PLATFORMS &nbsp;·&nbsp; CACHE 30 MIN &nbsp;·&nbsp; "
     f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
     f"</p>",
